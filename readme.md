@@ -55,7 +55,7 @@ python flickr-set-downloader.py path/to/folder/where/photos/should/be/stored
 Contact
 -------
 
-Feel free to post questions, feedback and contributions on the GitHub page:
+Feel free to post questions, feedback and contributions on the GitHub page: https://github.com/plevold/flickr-set-downloader
 
 
 License

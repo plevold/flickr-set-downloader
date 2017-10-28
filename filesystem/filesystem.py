@@ -19,7 +19,8 @@ class FilesystemState:
             self.filenames = {}
             self.identifiers = {}
         self.dirname = dirname
-        self.touched_filenames = set()
+        self.clear_temporary_filenames()
+        self.clear_touched_filenames()
 
 
     def save(self):
@@ -28,7 +29,7 @@ class FilesystemState:
         pickle.dump(data, open(path, 'wb'))
 
 
-    def add(self, identifier, filename, touch=True):
+    def add(self, identifier, filename, temporary=False):
         if self.has_identifier(identifier):
             raise RuntimeError('Cannot add <{}, {}> - identifier already exists'
                                 .format(identifier, filename))
@@ -38,8 +39,10 @@ class FilesystemState:
 
         self.filenames[identifier] = filename
         self.identifiers[filename] = identifier
-        if touch:
+        if not temporary:
             self.touched_filenames.add(filename)
+        else:
+            self.temporary_filenames.add(filename)
 
 
     def touch(self, identifier, filename):
@@ -99,6 +102,10 @@ class FilesystemState:
         self.touched_filenames = set()
 
 
+    def clear_temporary_filenames(self):
+        self.temporary_filenames = set()
+
+
 class FilesystemOperations:
     def __init__(self):
         self.exists = os.path.exists
@@ -119,7 +126,7 @@ class Filesystem:
     def add(self, identifier, filename, creator):
         path = os.path.join(self.dirname, filename)
         if self.state.has_identifier(identifier):
-            # Identifier already exists. Move file to filename
+            # Identifier already exists. Move file to temporary filename
             if not self.fsops.exists(path):
                 # File has been deleted since last run, download again
                 self.state.remove_identifier(identifier)
@@ -140,10 +147,16 @@ class Filesystem:
     def create(self, identifier, filename, creator):
         path = os.path.join(self.dirname, filename)
         self.state.add(identifier, filename)
-        creator(path)
+        try:
+            creator(path)
+        except Exception as e:
+            # File is probably incomplete if exception is raised during creation
+            self.state.remove_identifier(identifier)
+            self.fsops.delete(path)
+            raise e
 
 
-    def move(self, identifier, new_filename, touch=True):
+    def move(self, identifier, new_filename, temporary=False):
         if self.state.has_filename(new_filename):
             other_identifier = self.state.get_identifier(new_filename)
             if identifier == other_identifier:
@@ -155,13 +168,13 @@ class Filesystem:
         old_path = os.path.join(self.dirname, old_filename)
         new_path = os.path.join(self.dirname, new_filename)
         self.state.remove_identifier(identifier)
-        self.state.add(identifier, new_filename, touch=touch)
+        self.state.add(identifier, new_filename, temporary=temporary)
         self.fsops.rename(old_path, new_path)
 
 
     def move_temporary(self, identifier):
         temp_filename = str(uuid.uuid4())
-        self.move(identifier, temp_filename, touch=False)
+        self.move(identifier, temp_filename, temporary=True)
 
 
     def finish_sync(self):
@@ -171,7 +184,19 @@ class Filesystem:
             self.state.remove_filename(filename)
             self.fsops.delete(path)
         self.state.clear_touched_filenames()
+        for filename in self.state.temporary_filenames:
+            path = os.path.join(self.dirname, filename)
+            if self.state.has_filename(filename):
+                self.state.remove_filename(filename)
+            self.fsops.delete(path)
+        self.state.clear_temporary_filenames()
 
 
     def save(self):
+        self.state.clear_touched_filenames()
+        for filename in self.state.temporary_filenames:
+            path = os.path.join(self.dirname, filename)
+            self.state.remove_filename(filename)
+            self.fsops.delete(path)
+        self.state.clear_temporary_filenames()
         self.state.save()
